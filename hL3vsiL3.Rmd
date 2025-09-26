@@ -1,0 +1,291 @@
+---
+title: "Tokyo strain hL3vsiL3"
+author: "ISHIDA M."
+output: word_document
+---
+
+#Import Data
+
+```{r}
+S_ratti <- read.csv("~/Desktop/Sr.csv", stringsAsFactors = FALSE)
+head(S_ratti)
+
+```
+
+```{r}
+rownames(S_ratti) <- make.unique(S_ratti$Geneid)
+S_ratti <- S_ratti[ , -1]   # drop Geneid column
+```
+
+```{r}
+S_ratti <- as.data.frame(lapply(S_ratti, as.numeric))
+rownames(S_ratti) <- make.unique(rownames(S_ratti))
+summary(S_ratti)
+S_ratti <- na.omit(S_ratti)
+anyNA(S_ratti)   # should now return FALSE
+
+```
+
+#DGE list
+
+```{r}
+library(edgeR)
+
+S_rattigroups <- c("iL3","iL3","iL3","hL3","hL3","hL3")
+DGElist <- DGEList(counts = S_ratti, group = factor(S_rattigroups))
+DGElist
+```
+
+#Filtering data
+
+```{r}
+dim(DGElist)
+DGElist.full <- DGElist # keep the old one in case we mess up
+head(DGElist$counts)
+head(cpm(DGElist))
+apply(DGElist$counts, 2, sum) # total gene counts per sample
+
+keep <- filterByExpr(DGElist, group=S_rattigroups)
+DGElist <- DGElist[keep, , keep.lib.sizes = FALSE]
+```
+
+#Normalizing the data
+
+```{r}
+DGElist <- calcNormFactors(DGElist, method = "TMM")
+DGElist
+```
+
+#Log2CPM
+
+```{r}
+cpm.fil.nor <- DGElist
+log2cpm <- cpm(cpm.fil.nor, log=TRUE)
+log2cpm
+```
+
+#Box plot - distribution
+
+```{r}
+boxplot(log2cpm, las=2, col="grey",
+
+main="Distribution of samples", ylab="Log-cpm")
+```
+
+#Heatmap&PCA #Data set up
+
+```{r loadBaseData}
+# Define sample IDs and corresponding group assignments
+sample_ids <- c("iL3_1", "iL3_2", "iL3_3", "hL3_1", "hL3_2", "hL3_3")  
+group_assignments <- c("iL3", "iL3", "iL3", "hL3", "hL3", "hL3")  
+
+# Create the targets data frame
+targets <- data.frame(sample = sample_ids, group = group_assignments)
+
+#Create log2CPM file for plotting
+log2cpmPCA <- log2cpm
+log2cpmHM <-log2cpm
+
+# Check for presence of output plots folder, generate if it doesn't exist
+output.path <- "../Outputs"
+if (!dir.exists(output.path)){
+  dir.create(output.path)
+}
+```
+
+Hierarchical Clustering and Principle Components Analysis
+
+```{r}
+# Calculate distance matrix
+distance <- dist(t(log2cpmPCA), method = "maximum")
+
+# Calculate clusters to visualize differences
+clusters <- hclust(distance, method = "complete")
+dend <- as.dendrogram(clusters)
+
+p1<-dend %>% 
+  dendextend::set("branches_k_color", k = 2) %>% 
+  dendextend::set("hang_leaves", c(0.05)) %>% 
+  dendextend::set("labels_cex", c(0.5)) %>%
+  dendextend::set("labels_colors", k = 2) %>% 
+  dendextend::set("branches_lwd", c(0.7)) %>% 
+  
+  as.ggdend %>%
+  ggplot (offset_labels = -0.2) +
+  theme_dendro() +
+  ylim(0, max(get_branches_heights(dend))) +
+  labs(title = "S. ratti: Hierarchical Cluster Dendrogram ",
+       subtitle = "Tokyo strain, filtered, TMM normalized",
+       y = "Distance",
+       x = "Before-After infection") +
+  coord_fixed(1/2) +
+  theme(axis.title.x = element_text(color = "black"),
+        axis.title.y = element_text(angle = 90),
+        axis.text.y = element_text(angle = 0),
+        axis.line.y = element_line(color = "black"),
+        axis.ticks.y = element_line(color = "black"),
+        axis.ticks.length.y = unit(2, "mm"))
+```
+
+Dendrogram to visualize heirachical clustering
+
+```{r echo = FALSE}
+p1
+```
+
+```{r multivariate.2}
+# Principal component analysis (PCA) 
+pca.res <- prcomp(t(log2cpmPCA), scale.=F, retx=T)
+summary(pca.res)
+
+p2<-fviz_eig(pca.res,
+             barcolor = brewer.pal(8,"Pastel2")[8],
+             barfill = brewer.pal(8,"Pastel2")[8],
+             linecolor = "black",
+             main = "Scree plot: proportion of variance accounted for by each principal component",
+             ggtheme = theme_bw())
+```
+
+Screeplot of PCA Eigenvalues
+
+```{r echo = FALSE}
+p2
+```
+
+## #PCA
+
+```{r multivariate.3}
+pc.var<-pca.res$sdev^2 
+pc.per<-round(pc.var/sum(pc.var)*100, 1) 
+
+# Visualize the PCA result 
+pca.res.df <- as_tibble(pca.res$x)
+
+# Plotting PC1 and PC2
+p3<-ggplot(pca.res.df) +
+  aes(x=PC1, y=PC2, label=targets$group, 
+      fill = targets$group,
+      color = targets$group,
+      shape = targets$group
+  ) +
+  geom_point(size=4, color = "black") +
+  scale_colour_manual(values = 
+                      c("#68C3A6","#F68D64",
+                        "#8DA0CA"),
+                    aesthetics = c("colour", "fill")) +
+  scale_shape_manual(values = 
+                       c(21, 22,
+                         23)) +
+  xlab(paste0("PC1 (",pc.per[1],"%",")")) + 
+  ylab(paste0("PC2 (",pc.per[2],"%",")")) +
+  labs(title=,
+       sub = "Note: analysis is blind to larvae stage identity.",
+       fill = "Life stage",
+       shape = "Life stage") +
+  scale_x_continuous(expand = c(.3, .3)) +
+  scale_y_continuous(expand = c(.3, .3)) +
+  coord_fixed() +
+  theme_bw() +
+  theme(text = element_text(size = 10),
+        title = element_text(size = 10))
+
+suppressMessages(ggsave("S_ratti_PCA.pdf",
+       plot = p3,
+       device = "pdf",
+       height = 4,
+       width = 7,
+       path = output.path,
+       useDingbats=FALSE))
+```
+
+```{r echo = FALSE}
+p3
+```
+
+## #Heatmap
+
+```{r gene.expression.heatmap}
+diffGenes <- log2cpmHM %>%
+  as_tibble(rownames = "Gene_id", .name_repair = "unique") %>%
+  dplyr::select(!Gene_id) %>%
+  as.matrix()
+rownames(diffGenes) <- rownames(log2cpmHM)
+
+clustColumns <- hclust(as.dist(1-cor(diffGenes, method="spearman")), method="complete")
+clustRows <- hclust(as.dist(1-cor(t(diffGenes),
+                                  method="pearson")),
+                    method="complete")
+par(cex.main=1.2)
+
+showticklabels <- c(TRUE,FALSE)
+p<-pheatmap(diffGenes,
+            color = RdBu(75),
+            cluster_rows = clustRows,
+            cluster_cols = clustColumns,
+            show_rownames = F,
+            scale = "row",
+            angle_col = 45,
+            main = 
+)
+
+```
+
+# #Differential gene expression with limma-voom
+
+#Set data
+
+```{r}
+DGElim <- DGElist
+group <- as.factor(c("iL3","iL3","iL3","HL3","HL3","HL3"))
+design <- model.matrix(~0 + group)
+colnames(design) = levels(factor(group))
+```
+
+#Voom transformation/ Mean variance relationship -weights for each gene
+
+```{r}
+v <- voom(DGElim, design, plot = T, normalize="quantile")
+```
+
+#Fitting linear models #HL3vsiL3
+
+```{r}
+cont.matrix <- makeContrasts(HL3vsiL3 = HL3-iL3, levels= colnames (design))
+```
+
+#Estimate contrast for each gene
+
+```{r}
+fit <- lmFit(v, design)
+vfit <- contrasts.fit(fit, cont.matrix)
+```
+
+#Empirical Bayes smoothing of standard errors
+
+```{r}
+efit <- eBayes(vfit)
+```
+
+#Extracte all DE genes
+
+```{r}
+dt <- decideTests(efit)
+summary(dt)
+```
+
+#Topgenes
+
+```{r}
+HL3vsiL3 <- topTable(efit, coef = "HL3vsiL3", n=Inf)
+HL3vsiL3_diff <- na.omit(HL3vsiL3)
+head(HL3vsiL3_diff)
+adj.p.cutoff <- 0.05
+HL3vsiL3sig <- HL3vsiL3_diff[which(HL3vsiL3_diff$adj.P.Val < adj.p.cutoff),]
+HL3vsiL3sig <- HL3vsiL3sig[order(HL3vsiL3sig$adj.P.Val),] #DE with filter NA and padj <0.05
+```
+
+#PlotMD
+
+```{r}
+plotMD(efit, column = 1, status = dt[,1], main = "", xlim = c(-8, 13),hl.col = c("red", "blue"))
+```
